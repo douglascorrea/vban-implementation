@@ -46,4 +46,8 @@ vban_test
 # macOS specific
 .DS_Store
 .AppleDouble
-.LSOverride 
+.LSOverride
+
+# Project specific
+VBAN4mac/build/
+simple_bridge 
