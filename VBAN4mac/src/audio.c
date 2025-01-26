@@ -18,6 +18,18 @@ static AudioComponent input_component = NULL;
 audio_buffer_t g_audio_buffer = {0};
 audio_buffer_t g_input_buffer = {0};
 
+// Monitoring callbacks
+static audio_monitor_callback input_monitor = NULL;
+static audio_monitor_callback output_monitor = NULL;
+
+void audio_set_input_monitor(audio_monitor_callback callback) {
+    input_monitor = callback;
+}
+
+void audio_set_output_monitor(audio_monitor_callback callback) {
+    output_monitor = callback;
+}
+
 // Audio callbacks
 static OSStatus audio_render_callback(void *inRefCon,
                                     AudioUnitRenderActionFlags *ioActionFlags,
@@ -37,6 +49,19 @@ static OSStatus audio_render_callback(void *inRefCon,
         for (size_t i = 0; i < frames_to_copy; i++) {
             left[i] = g_audio_buffer.data[i * 2];
             right[i] = g_audio_buffer.data[i * 2 + 1];
+        }
+        
+        // Call output monitor if set
+        if (output_monitor) {
+            float* monitor_buffer = malloc(frames_to_copy * sizeof(float));
+            if (monitor_buffer) {
+                // Convert int16 to float for monitoring
+                for (size_t i = 0; i < frames_to_copy; i++) {
+                    monitor_buffer[i] = left[i] / 32767.0f;  // Use left channel for monitoring
+                }
+                output_monitor(monitor_buffer, frames_to_copy);
+                free(monitor_buffer);
+            }
         }
         
         // Remove processed data
@@ -61,9 +86,6 @@ static OSStatus audio_input_callback(void *inRefCon,
                                    UInt32 inNumberFrames,
                                    AudioBufferList *ioData) {
     
-    static uint32_t callback_count = 0;
-    static uint32_t total_samples = 0;
-    
     // Create buffer list for rendered audio
     AudioBufferList buffer_list;
     buffer_list.mNumberBuffers = 1;
@@ -87,17 +109,14 @@ static OSStatus audio_input_callback(void *inRefCon,
     if (status == noErr) {
         pthread_mutex_lock(&g_input_buffer.mutex);
         
+        // Call input monitor if set
+        if (input_monitor) {
+            input_monitor(buffer_list.mBuffers[0].mData, inNumberFrames);
+        }
+        
         // Convert float mono to int16 stereo
         float* input_samples = (float*)buffer_list.mBuffers[0].mData;
         size_t output_samples = inNumberFrames * 2; // Stereo output
-        
-        // Find maximum sample amplitude for debugging
-        float max_sample = 0;
-        for (size_t i = 0; i < inNumberFrames; i++) {
-            if (fabsf(input_samples[i]) > max_sample) {
-                max_sample = fabsf(input_samples[i]);
-            }
-        }
         
         if (g_input_buffer.size + output_samples <= g_input_buffer.capacity) {
             // Convert float mono to int16 stereo
@@ -109,17 +128,6 @@ static OSStatus audio_input_callback(void *inRefCon,
             }
             
             g_input_buffer.size += output_samples;
-            total_samples += inNumberFrames;
-            
-            // Print debug info every 100 callbacks
-            if (++callback_count % 100 == 0) {
-                printf("Audio Input Stats:\n");
-                printf("  Callbacks: %u\n", callback_count);
-                printf("  Total Samples: %u\n", total_samples);
-                printf("  Current Buffer Size: %zu\n", g_input_buffer.size);
-                printf("  Frame Size: %u\n", inNumberFrames);
-                printf("  Max Sample Amplitude: %.6f\n", max_sample);
-            }
         }
         
         pthread_mutex_unlock(&g_input_buffer.mutex);
@@ -464,4 +472,192 @@ void audio_cleanup(void) {
     free(g_input_buffer.data);
     pthread_mutex_destroy(&g_audio_buffer.mutex);
     pthread_mutex_destroy(&g_input_buffer.mutex);
+}
+
+// Function to get device name
+char* get_device_name(AudioDeviceID deviceID) {
+    AudioObjectPropertyAddress property = {
+        kAudioDevicePropertyDeviceNameCFString,
+        kAudioObjectPropertyScopeGlobal,
+        kAudioObjectPropertyElementMaster
+    };
+    
+    CFStringRef deviceName;
+    UInt32 size = sizeof(CFStringRef);
+    OSStatus status = AudioObjectGetPropertyData(deviceID, &property, 0, NULL, &size, &deviceName);
+    
+    if (status != noErr) {
+        return NULL;
+    }
+    
+    char* name = malloc(256);
+    if (!CFStringGetCString(deviceName, name, 256, kCFStringEncodingUTF8)) {
+        free(name);
+        CFRelease(deviceName);
+        return NULL;
+    }
+    
+    CFRelease(deviceName);
+    return name;
+}
+
+// Function to get device sample rate
+static Float64 get_device_sample_rate(AudioDeviceID deviceID, bool isInput) {
+    AudioObjectPropertyAddress property = {
+        kAudioDevicePropertyNominalSampleRate,
+        isInput ? kAudioDevicePropertyScopeInput : kAudioDevicePropertyScopeOutput,
+        kAudioObjectPropertyElementMaster
+    };
+    
+    Float64 sampleRate;
+    UInt32 size = sizeof(Float64);
+    OSStatus status = AudioObjectGetPropertyData(deviceID, &property, 0, NULL, &size, &sampleRate);
+    
+    return (status == noErr) ? sampleRate : 0.0;
+}
+
+// Function to list all audio devices
+void audio_list_devices(void) {
+    // Get the number of audio devices
+    AudioObjectPropertyAddress property = {
+        kAudioHardwarePropertyDevices,
+        kAudioObjectPropertyScopeGlobal,
+        kAudioObjectPropertyElementMaster
+    };
+    
+    UInt32 size = 0;
+    OSStatus status = AudioObjectGetPropertyDataSize(kAudioObjectSystemObject, &property, 0, NULL, &size);
+    if (status != noErr) {
+        printf("Failed to get device list size\n");
+        return;
+    }
+    
+    // Get the device IDs
+    int deviceCount = size / sizeof(AudioDeviceID);
+    AudioDeviceID* devices = malloc(size);
+    status = AudioObjectGetPropertyData(kAudioObjectSystemObject, &property, 0, NULL, &size, devices);
+    if (status != noErr) {
+        printf("Failed to get device list\n");
+        free(devices);
+        return;
+    }
+    
+    // Get default input and output devices
+    AudioDeviceID defaultInput, defaultOutput;
+    size = sizeof(AudioDeviceID);
+    
+    property.mSelector = kAudioHardwarePropertyDefaultInputDevice;
+    AudioObjectGetPropertyData(kAudioObjectSystemObject, &property, 0, NULL, &size, &defaultInput);
+    
+    property.mSelector = kAudioHardwarePropertyDefaultOutputDevice;
+    AudioObjectGetPropertyData(kAudioObjectSystemObject, &property, 0, NULL, &size, &defaultOutput);
+    
+    printf("\nAvailable Audio Devices:\n");
+    printf("------------------------\n");
+    
+    for (int i = 0; i < deviceCount; i++) {
+        AudioDeviceID deviceID = devices[i];
+        char* name = get_device_name(deviceID);
+        if (!name) continue;
+        
+        // Check if device has input/output capabilities
+        property.mSelector = kAudioDevicePropertyStreamConfiguration;
+        
+        // Check input channels
+        property.mScope = kAudioDevicePropertyScopeInput;
+        status = AudioObjectGetPropertyDataSize(deviceID, &property, 0, NULL, &size);
+        AudioBufferList* bufferList = malloc(size);
+        status = AudioObjectGetPropertyData(deviceID, &property, 0, NULL, &size, bufferList);
+        UInt32 inputChannels = 0;
+        for (UInt32 i = 0; i < bufferList->mNumberBuffers; i++) {
+            inputChannels += bufferList->mBuffers[i].mNumberChannels;
+        }
+        free(bufferList);
+        
+        // Check output channels
+        property.mScope = kAudioDevicePropertyScopeOutput;
+        status = AudioObjectGetPropertyDataSize(deviceID, &property, 0, NULL, &size);
+        bufferList = malloc(size);
+        status = AudioObjectGetPropertyData(deviceID, &property, 0, NULL, &size, bufferList);
+        UInt32 outputChannels = 0;
+        for (UInt32 i = 0; i < bufferList->mNumberBuffers; i++) {
+            outputChannels += bufferList->mBuffers[i].mNumberChannels;
+        }
+        free(bufferList);
+        
+        // Get sample rates
+        Float64 inputRate = get_device_sample_rate(deviceID, true);
+        Float64 outputRate = get_device_sample_rate(deviceID, false);
+        
+        printf("\nDevice ID: %u - %s\n", (unsigned int)deviceID, name);
+        if (deviceID == defaultInput) printf("  * Default Input Device *\n");
+        if (deviceID == defaultOutput) printf("  * Default Output Device *\n");
+        if (inputChannels > 0) {
+            printf("  Input: %u channels @ %.0f Hz\n", inputChannels, inputRate);
+        }
+        if (outputChannels > 0) {
+            printf("  Output: %u channels @ %.0f Hz\n", outputChannels, outputRate);
+        }
+        
+        free(name);
+    }
+    
+    free(devices);
+    printf("\n");
+}
+
+// Function to set input device
+OSStatus audio_set_input_device(AudioDeviceID deviceID) {
+    if (!input_unit) {
+        printf("Audio input unit not initialized\n");
+        return -1;
+    }
+    
+    OSStatus status = AudioUnitSetProperty(input_unit,
+                                         kAudioOutputUnitProperty_CurrentDevice,
+                                         kAudioUnitScope_Global,
+                                         0,
+                                         &deviceID,
+                                         sizeof(deviceID));
+                                         
+    if (status != noErr) {
+        printf("Failed to set input device: %d\n", (int)status);
+        return status;
+    }
+    
+    char* name = get_device_name(deviceID);
+    if (name) {
+        printf("Successfully set input device to: %s\n", name);
+        free(name);
+    }
+    
+    return noErr;
+}
+
+// Function to set output device
+OSStatus audio_set_output_device(AudioDeviceID deviceID) {
+    if (!audio_unit) {
+        printf("Audio output unit not initialized\n");
+        return -1;
+    }
+    
+    OSStatus status = AudioUnitSetProperty(audio_unit,
+                                         kAudioOutputUnitProperty_CurrentDevice,
+                                         kAudioUnitScope_Global,
+                                         0,
+                                         &deviceID,
+                                         sizeof(deviceID));
+                                         
+    if (status != noErr) {
+        printf("Failed to set output device: %d\n", (int)status);
+        return status;
+    }
+    
+    char* name = get_device_name(deviceID);
+    if (name) {
+        printf("Successfully set output device to: %s\n", name);
+        free(name);
+    }
+    
+    return noErr;
 } 

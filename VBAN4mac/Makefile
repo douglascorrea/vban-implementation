@@ -9,12 +9,13 @@ EXAMPLES_DIR = examples
 
 SRCS = $(wildcard $(SRC_DIR)/*.c)
 OBJS = $(SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
-EXAMPLES = $(wildcard $(EXAMPLES_DIR)/*.c)
-EXAMPLE_BINS = $(EXAMPLES:$(EXAMPLES_DIR)/%.c=$(BUILD_DIR)/%)
 
-.PHONY: all clean examples
+EXAMPLES = simple_bridge device_bridge monitor_bridge
+EXAMPLE_BINS = $(EXAMPLES:%=$(BUILD_DIR)/%)
 
-all: $(BUILD_DIR)/libvban4mac.a examples
+.PHONY: all clean
+
+all: $(BUILD_DIR)/libvban4mac.a $(EXAMPLE_BINS)
 
 $(BUILD_DIR)/libvban4mac.a: $(OBJS)
 	@mkdir -p $(BUILD_DIR)
@@ -23,8 +24,6 @@ $(BUILD_DIR)/libvban4mac.a: $(OBJS)
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
-
-examples: $(EXAMPLE_BINS)
 
 $(BUILD_DIR)/%: $(EXAMPLES_DIR)/%.c $(BUILD_DIR)/libvban4mac.a
 	@mkdir -p $(BUILD_DIR)
