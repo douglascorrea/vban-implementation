@@ -124,12 +124,12 @@ void* network_send_thread(void* arg) {
                 total_samples_sent += samples_per_packet;
                 
                 // Print stats every 100 packets
-                if (packets_sent % 100 == 0) {
-                    printf("VBAN Send Stats:\n");
-                    printf("- Packets sent: %u\n", packets_sent);
-                    printf("- Total samples sent: %llu\n", total_samples_sent);
-                    printf("- Current input buffer size: %zu\n", g_input_buffer.size);
-                }
+                // if (packets_sent % 100 == 0) {
+                //     printf("VBAN Send Stats:\n");
+                //     printf("- Packets sent: %u\n", packets_sent);
+                //     printf("- Total samples sent: %llu\n", total_samples_sent);
+                //     printf("- Current input buffer size: %zu\n", g_input_buffer.size);
+                // }
             }
         } else {
             pthread_mutex_unlock(&g_input_buffer.mutex);
