@@ -1,6 +1,6 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -I./include -framework AudioToolbox -framework CoreAudio
-LDFLAGS = -framework AudioToolbox -framework CoreAudio
+CFLAGS = -Wall -Wextra -I./include -framework AudioToolbox -framework CoreAudio -framework CoreFoundation
+LDFLAGS = -framework AudioToolbox -framework CoreAudio -framework CoreFoundation
 
 SRC_DIR = src
 INCLUDE_DIR = include

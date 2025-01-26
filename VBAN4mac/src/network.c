@@ -3,9 +3,14 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
+#include <libkern/OSByteOrder.h>
+#include "../include/vban4mac/vban.h"
 #include "network.h"
 #include "audio.h"
 #include "../include/vban4mac/types.h"
+
+// Global audio buffers
+extern audio_buffer_t g_input_buffer;
 
 int network_init(vban_context_t* ctx, const char* remote_ip) {
     // Create UDP socket
@@ -80,13 +85,45 @@ void* network_send_thread(void* arg) {
     vban_context_t* ctx = (vban_context_t*)arg;
     const int samples_per_packet = 256;  // VBAN standard packet size
     int16_t send_buffer[samples_per_packet * 2];  // 2 channels
+    uint64_t total_samples_sent = 0;
     uint32_t packets_sent = 0;
 
     printf("VBAN Send Thread Started\n");
 
     while (ctx->is_running) {
-        // Sleep for a short time to prevent busy waiting
-        usleep(1000);  // 1ms
+        pthread_mutex_lock(&g_input_buffer.mutex);
+        
+        // Check if we have enough data to send
+        if (g_input_buffer.size >= samples_per_packet * 2) {  // 2 channels
+            // Copy data to send buffer
+            memcpy(send_buffer, g_input_buffer.data, samples_per_packet * 2 * sizeof(int16_t));
+            
+            // Remove the data we're about to send
+            memmove(g_input_buffer.data, 
+                   g_input_buffer.data + samples_per_packet * 2,
+                   (g_input_buffer.size - samples_per_packet * 2) * sizeof(int16_t));
+            g_input_buffer.size -= samples_per_packet * 2;
+            
+            pthread_mutex_unlock(&g_input_buffer.mutex);
+            
+            // Send the audio data
+            if (vban_send_audio((vban_handle_t)ctx, send_buffer, samples_per_packet, 2) == 0) {
+                packets_sent++;
+                total_samples_sent += samples_per_packet;
+                
+                // Print stats every 100 packets
+                if (packets_sent % 100 == 0) {
+                    printf("VBAN Send Stats:\n");
+                    printf("- Packets sent: %u\n", packets_sent);
+                    printf("- Total samples sent: %llu\n", total_samples_sent);
+                    printf("- Current input buffer size: %zu\n", g_input_buffer.size);
+                }
+            }
+        } else {
+            pthread_mutex_unlock(&g_input_buffer.mutex);
+            // Sleep a bit if we don't have enough data
+            usleep(1000);  // 1ms
+        }
     }
 
     printf("VBAN Send Thread Stopped\n");

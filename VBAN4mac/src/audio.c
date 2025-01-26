@@ -15,8 +15,8 @@ static AudioComponentInstance input_unit = NULL;
 static AudioComponent input_component = NULL;
 
 // Audio buffers
-static audio_buffer_t g_audio_buffer = {0};
-static audio_buffer_t g_input_buffer = {0};
+audio_buffer_t g_audio_buffer = {0};
+audio_buffer_t g_input_buffer = {0};
 
 // Audio callbacks
 static OSStatus audio_render_callback(void *inRefCon,
@@ -60,11 +60,15 @@ static OSStatus audio_input_callback(void *inRefCon,
                                    UInt32 inBusNumber,
                                    UInt32 inNumberFrames,
                                    AudioBufferList *ioData) {
+    
+    static uint32_t callback_count = 0;
+    static uint32_t total_samples = 0;
+    
     // Create buffer list for rendered audio
     AudioBufferList buffer_list;
     buffer_list.mNumberBuffers = 1;
     buffer_list.mBuffers[0].mNumberChannels = 1;  // Mono input
-    buffer_list.mBuffers[0].mDataByteSize = inNumberFrames * sizeof(float);
+    buffer_list.mBuffers[0].mDataByteSize = inNumberFrames * sizeof(float);  // Device uses 32-bit float
     buffer_list.mBuffers[0].mData = malloc(buffer_list.mBuffers[0].mDataByteSize);
 
     if (!buffer_list.mBuffers[0].mData) {
@@ -87,20 +91,40 @@ static OSStatus audio_input_callback(void *inRefCon,
         float* input_samples = (float*)buffer_list.mBuffers[0].mData;
         size_t output_samples = inNumberFrames * 2; // Stereo output
         
+        // Find maximum sample amplitude for debugging
+        float max_sample = 0;
+        for (size_t i = 0; i < inNumberFrames; i++) {
+            if (fabsf(input_samples[i]) > max_sample) {
+                max_sample = fabsf(input_samples[i]);
+            }
+        }
+        
         if (g_input_buffer.size + output_samples <= g_input_buffer.capacity) {
-            // Convert and duplicate mono to stereo
+            // Convert float mono to int16 stereo
             for (size_t i = 0; i < inNumberFrames; i++) {
-                // Convert float (-1.0 to 1.0) to int16 (-32768 to 32767)
+                // Convert float to int16 and duplicate to both channels
                 int16_t sample = (int16_t)(input_samples[i] * 32767.0f);
-                // Write same sample to both channels
                 g_input_buffer.data[g_input_buffer.size + i * 2] = sample;
                 g_input_buffer.data[g_input_buffer.size + i * 2 + 1] = sample;
             }
             
             g_input_buffer.size += output_samples;
+            total_samples += inNumberFrames;
+            
+            // Print debug info every 100 callbacks
+            if (++callback_count % 100 == 0) {
+                printf("Audio Input Stats:\n");
+                printf("  Callbacks: %u\n", callback_count);
+                printf("  Total Samples: %u\n", total_samples);
+                printf("  Current Buffer Size: %zu\n", g_input_buffer.size);
+                printf("  Frame Size: %u\n", inNumberFrames);
+                printf("  Max Sample Amplitude: %.6f\n", max_sample);
+            }
         }
         
         pthread_mutex_unlock(&g_input_buffer.mutex);
+    } else {
+        printf("AudioUnitRender failed with status: %d\n", (int)status);
     }
 
     free(buffer_list.mBuffers[0].mData);
@@ -171,6 +195,8 @@ OSStatus audio_output_init(void) {
 }
 
 OSStatus audio_input_init(void) {
+    printf("Starting audio input initialization...\n");
+    
     // Describe audio component
     AudioComponentDescription desc = {0};
     desc.componentType = kAudioUnitType_Output;
@@ -179,49 +205,190 @@ OSStatus audio_input_init(void) {
 
     // Get default input component
     input_component = AudioComponentFindNext(NULL, &desc);
-    if (!input_component) return -1;
+    if (!input_component) {
+        printf("Failed to find input component\n");
+        return -1;
+    }
+    printf("Found input component\n");
 
     // Create audio unit instance
     OSStatus status = AudioComponentInstanceNew(input_component, &input_unit);
-    if (status != noErr) return status;
+    if (status != noErr) {
+        printf("Failed to create input unit instance: %d\n", (int)status);
+        return status;
+    }
+    printf("Created input unit instance\n");
 
-    // Enable input and disable output
-    UInt32 enable = 1;
-    status = AudioUnitSetProperty(input_unit,
-                                kAudioOutputUnitProperty_EnableIO,
-                                kAudioUnitScope_Input,
-                                1,
-                                &enable,
-                                sizeof(enable));
-    if (status != noErr) return status;
+    // Get the current input device ID
+    AudioObjectPropertyAddress property = {
+        kAudioHardwarePropertyDefaultInputDevice,
+        kAudioObjectPropertyScopeGlobal,
+        kAudioObjectPropertyElementMaster
+    };
+    
+    AudioDeviceID inputDevice;
+    UInt32 size = sizeof(AudioDeviceID);
+    status = AudioObjectGetPropertyData(kAudioObjectSystemObject,
+                                      &property,
+                                      0,
+                                      NULL,
+                                      &size,
+                                      &inputDevice);
+                                      
+    if (status == noErr) {
+        // Set the input device
+        UInt32 enable = 1;
+        status = AudioUnitSetProperty(input_unit,
+                                    kAudioOutputUnitProperty_EnableIO,
+                                    kAudioUnitScope_Input,
+                                    1,
+                                    &enable,
+                                    sizeof(enable));
+        if (status != noErr) {
+            printf("Failed to enable input: %d\n", (int)status);
+            return status;
+        }
+        printf("Enabled input on bus 1\n");
 
-    enable = 0;
-    status = AudioUnitSetProperty(input_unit,
-                                kAudioOutputUnitProperty_EnableIO,
-                                kAudioUnitScope_Output,
-                                0,
-                                &enable,
-                                sizeof(enable));
-    if (status != noErr) return status;
+        // Disable output on bus 0
+        enable = 0;
+        status = AudioUnitSetProperty(input_unit,
+                                    kAudioOutputUnitProperty_EnableIO,
+                                    kAudioUnitScope_Output,
+                                    0,
+                                    &enable,
+                                    sizeof(enable));
+        if (status != noErr) {
+            printf("Failed to disable output: %d\n", (int)status);
+            return status;
+        }
+        printf("Disabled output on bus 0\n");
 
-    // Set up input callback
-    AURenderCallbackStruct callback = {0};
-    callback.inputProc = audio_input_callback;
-    callback.inputProcRefCon = NULL;
+        // Set the device ID
+        status = AudioUnitSetProperty(input_unit,
+                                    kAudioOutputUnitProperty_CurrentDevice,
+                                    kAudioUnitScope_Global,
+                                    0,
+                                    &inputDevice,
+                                    sizeof(inputDevice));
+        if (status != noErr) {
+            printf("Failed to set input device: %d\n", (int)status);
+            return status;
+        }
+        printf("Successfully set input device\n");
+        
+        // Get the device name
+        property.mSelector = kAudioDevicePropertyDeviceNameCFString;
+        property.mScope = kAudioObjectPropertyScopeGlobal;
+        property.mElement = kAudioObjectPropertyElementMaster;
+        
+        CFStringRef deviceName;
+        size = sizeof(CFStringRef);
+        status = AudioObjectGetPropertyData(inputDevice,
+                                          &property,
+                                          0,
+                                          NULL,
+                                          &size,
+                                          &deviceName);
+                                          
+        if (status == noErr) {
+            char name[256];
+            CFStringGetCString(deviceName, name, sizeof(name), kCFStringEncodingUTF8);
+            printf("Using input device: %s\n", name);
+            CFRelease(deviceName);
+        } else {
+            printf("Failed to get input device name: %d\n", (int)status);
+        }
+    } else {
+        printf("Failed to get input device ID: %d\n", (int)status);
+    }
 
-    status = AudioUnitSetProperty(input_unit,
-                                kAudioOutputUnitProperty_SetInputCallback,
-                                kAudioUnitScope_Global,
-                                0,
-                                &callback,
-                                sizeof(callback));
-    if (status != noErr) return status;
+    // Get the actual format of the input device
+    AudioStreamBasicDescription deviceFormat;
+    UInt32 propertySize = sizeof(deviceFormat);
+    property.mSelector = kAudioDevicePropertyStreamFormat;
+    property.mScope = kAudioDevicePropertyScopeInput;
+    status = AudioObjectGetPropertyData(inputDevice,
+                                      &property,
+                                      0,
+                                      NULL,
+                                      &propertySize,
+                                      &deviceFormat);
+                                      
+    if (status == noErr) {
+        printf("\nDevice's actual format:\n");
+        printf("  Sample Rate: %.0f Hz\n", deviceFormat.mSampleRate);
+        printf("  Channels: %u\n", deviceFormat.mChannelsPerFrame);
+        printf("  Bits per Channel: %u\n", deviceFormat.mBitsPerChannel);
+        printf("  Bytes per Frame: %u\n", deviceFormat.mBytesPerFrame);
+        printf("  Format Flags: 0x%x\n", (unsigned int)deviceFormat.mFormatFlags);
+        
+        // Use the device's format
+        AudioStreamBasicDescription format = deviceFormat;
 
-    // Initialize and start audio unit
-    status = AudioUnitInitialize(input_unit);
-    if (status != noErr) return status;
+        // Set format for input scope (recording)
+        status = AudioUnitSetProperty(input_unit,
+                                    kAudioUnitProperty_StreamFormat,
+                                    kAudioUnitScope_Output,  // Output scope for input unit
+                                    1,                       // Input bus
+                                    &format,
+                                    sizeof(format));
+        if (status != noErr) {
+            printf("Failed to set input scope format: %d\n", (int)status);
+            return status;
+        }
+        printf("Successfully set input scope format\n");
 
-    return AudioOutputUnitStart(input_unit);
+        // Set format for output scope (monitoring)
+        status = AudioUnitSetProperty(input_unit,
+                                    kAudioUnitProperty_StreamFormat,
+                                    kAudioUnitScope_Input,   // Input scope for output bus
+                                    0,                       // Output bus
+                                    &format,
+                                    sizeof(format));
+        if (status != noErr) {
+            printf("Failed to set output scope format: %d\n", (int)status);
+            return status;
+        }
+        printf("Successfully set output scope format\n");
+
+        // Set up input callback
+        AURenderCallbackStruct callback = {0};
+        callback.inputProc = audio_input_callback;
+        callback.inputProcRefCon = NULL;
+
+        status = AudioUnitSetProperty(input_unit,
+                                    kAudioOutputUnitProperty_SetInputCallback,
+                                    kAudioUnitScope_Global,
+                                    1,  // Input bus
+                                    &callback,
+                                    sizeof(callback));
+        if (status != noErr) {
+            printf("Failed to set input callback: %d\n", (int)status);
+            return status;
+        }
+        printf("Input callback registered successfully\n");
+
+        // Initialize audio unit
+        status = AudioUnitInitialize(input_unit);
+        if (status != noErr) {
+            printf("Failed to initialize input unit: %d\n", (int)status);
+            return status;
+        }
+        printf("Input unit initialized\n");
+
+        // Start audio unit
+        status = AudioOutputUnitStart(input_unit);
+        if (status != noErr) {
+            printf("Failed to start input unit: %d\n", (int)status);
+            return status;
+        }
+        printf("Input unit started successfully\n");
+    } else {
+        printf("Failed to get device format: %d\n", (int)status);
+    }
+
+    return noErr;
 }
 
 int audio_buffer_init(void) {
