@@ -64,17 +64,29 @@ void* network_receive_thread(void* arg) {
                                   (struct sockaddr*)&sender_addr, &sender_len);
 
         if (received > VBAN_HEADER_SIZE) {
+            // First validate sender's IP address
+            if (sender_addr.sin_addr.s_addr != ctx->remote_addr.sin_addr.s_addr) {
+                continue;  // Ignore packets from unauthorized senders
+            }
+
             vban_header_t* header = (vban_header_t*)packet;
             
-            // Validate VBAN packet
-            if (ntohl(header->vban) == (('V' << 24) | ('B' << 16) | ('A' << 8) | 'N')) {
-                int num_samples = (header->format_nbs + 1);
-                int num_channels = (header->format_nbc + 1);
-                
-                // Process received audio data
-                const int16_t* audio_data = (const int16_t*)(packet + VBAN_HEADER_SIZE);
-                audio_process_input(audio_data, num_samples, num_channels);
+            // Validate VBAN magic number
+            if (ntohl(header->vban) != (('V' << 24) | ('B' << 16) | ('A' << 8) | 'N')) {
+                continue;  // Not a VBAN packet
             }
+
+            // Validate stream name
+            if (strncmp(header->streamname, ctx->streamname, 16) != 0) {
+                continue;  // Wrong stream name
+            }
+
+            int num_samples = (header->format_nbs + 1);
+            int num_channels = (header->format_nbc + 1);
+            
+            // Process received audio data
+            const int16_t* audio_data = (const int16_t*)(packet + VBAN_HEADER_SIZE);
+            audio_process_input(audio_data, num_samples, num_channels);
         }
     }
 
