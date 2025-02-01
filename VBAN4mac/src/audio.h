@@ -21,6 +21,7 @@ int audio_buffer_init(void);
 void audio_buffer_cleanup(void);
 OSStatus audio_output_init(void);
 OSStatus audio_input_init(void);
+OSStatus audio_start_input(void);
 void audio_cleanup(void);
 
 // Device management functions

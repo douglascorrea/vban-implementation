@@ -26,7 +26,8 @@ vban_handle_t vban_init(const char* remote_ip, const char* stream_name) {
     // Initialize audio
     if (audio_buffer_init() != 0 ||
         audio_output_init() != noErr ||
-        audio_input_init() != noErr) {
+        audio_input_init() != noErr ||
+        audio_start_input() != noErr) {
         network_cleanup(ctx);
         free(ctx);
         return NULL;
