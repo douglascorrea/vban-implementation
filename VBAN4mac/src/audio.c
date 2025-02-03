@@ -268,6 +268,31 @@ OSStatus audio_input_init(void) {
     }
     printf("Disabled output on bus 0\n");
 
+    // Set up stream format for input
+    AudioStreamBasicDescription format = {0};
+    format.mSampleRate = VBAN_SAMPLE_RATE;
+    format.mFormatID = kAudioFormatLinearPCM;
+    format.mFormatFlags = kAudioFormatFlagIsFloat | 
+                         kAudioFormatFlagIsPacked;
+    format.mFramesPerPacket = 1;
+    format.mChannelsPerFrame = 1; // Mono input
+    format.mBitsPerChannel = 32;  // Float32
+    format.mBytesPerPacket = format.mBytesPerFrame = 
+        (format.mBitsPerChannel / 8) * format.mChannelsPerFrame;
+
+    // Set format for input scope (recording)
+    status = AudioUnitSetProperty(input_unit,
+                                kAudioUnitProperty_StreamFormat,
+                                kAudioUnitScope_Output,  // Output scope for input bus
+                                1,                       // Input bus
+                                &format,
+                                sizeof(format));
+    if (status != noErr) {
+        printf("Failed to set input scope format: %d\n", (int)status);
+        return status;
+    }
+    printf("Successfully set input scope format\n");
+
     // Set up input callback
     AURenderCallbackStruct callback = {0};
     callback.inputProc = audio_input_callback;
@@ -516,7 +541,7 @@ OSStatus audio_set_input_device(AudioDeviceID deviceID) {
                                          0,
                                          &deviceID,
                                          sizeof(deviceID));
-                                         
+
     if (status != noErr) {
         printf("Failed to set input device: %d\n", (int)status);
         return status;
