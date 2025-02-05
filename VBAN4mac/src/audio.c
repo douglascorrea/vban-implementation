@@ -114,17 +114,14 @@ static OSStatus audio_input_callback(void *inRefCon,
             input_monitor(buffer_list.mBuffers[0].mData, inNumberFrames);
         }
         
-        // Convert float mono to int16 stereo
+        // Convert float mono to int16 mono (no stereo duplication)
         float* input_samples = (float*)buffer_list.mBuffers[0].mData;
-        size_t output_samples = inNumberFrames * 2; // Stereo output
+        size_t output_samples = inNumberFrames; // Mono output
         
         if (g_input_buffer.size + output_samples <= g_input_buffer.capacity) {
-            // Convert float mono to int16 stereo
+            // Convert float to int16 keeping mono
             for (size_t i = 0; i < inNumberFrames; i++) {
-                // Convert float to int16 and duplicate to both channels
-                int16_t sample = (int16_t)(input_samples[i] * 32767.0f);
-                g_input_buffer.data[g_input_buffer.size + i * 2] = sample;
-                g_input_buffer.data[g_input_buffer.size + i * 2 + 1] = sample;
+                g_input_buffer.data[g_input_buffer.size + i] = (int16_t)(input_samples[i] * 32767.0f);
             }
             
             g_input_buffer.size += output_samples;

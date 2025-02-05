@@ -10,7 +10,7 @@
 #define VBAN_DATATYPE_INT16 0x01
 #define VBAN_DEFAULT_PORT 6980
 #define VBAN_SAMPLE_RATE 48000
-#define VBAN_SAMPLE_RATE_INDEX 11  // Index for 48kHz
+#define VBAN_SAMPLE_RATE_INDEX 3  // Index for 48kHz (corrected according to VBAN protocol spec)
 #define VBAN_PROTOCOL_MAXNBS 256  // Maximum number of samples per packet
 
 // VBAN Packet Header Structure

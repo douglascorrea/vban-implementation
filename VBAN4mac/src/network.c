@@ -96,7 +96,7 @@ void* network_receive_thread(void* arg) {
 void* network_send_thread(void* arg) {
     vban_context_t* ctx = (vban_context_t*)arg;
     const int samples_per_packet = 256;  // VBAN standard packet size
-    int16_t send_buffer[samples_per_packet * 2];  // 2 channels
+    int16_t send_buffer[samples_per_packet];  // Mono audio
     uint64_t total_samples_sent = 0;
     uint32_t packets_sent = 0;
 
@@ -106,30 +106,22 @@ void* network_send_thread(void* arg) {
         pthread_mutex_lock(&g_input_buffer.mutex);
         
         // Check if we have enough data to send
-        if (g_input_buffer.size >= samples_per_packet * 2) {  // 2 channels
+        if (g_input_buffer.size >= samples_per_packet) {  // Mono audio
             // Copy data to send buffer
-            memcpy(send_buffer, g_input_buffer.data, samples_per_packet * 2 * sizeof(int16_t));
+            memcpy(send_buffer, g_input_buffer.data, samples_per_packet * sizeof(int16_t));
             
             // Remove the data we're about to send
             memmove(g_input_buffer.data, 
-                   g_input_buffer.data + samples_per_packet * 2,
-                   (g_input_buffer.size - samples_per_packet * 2) * sizeof(int16_t));
-            g_input_buffer.size -= samples_per_packet * 2;
+                   g_input_buffer.data + samples_per_packet,
+                   (g_input_buffer.size - samples_per_packet) * sizeof(int16_t));
+            g_input_buffer.size -= samples_per_packet;
             
             pthread_mutex_unlock(&g_input_buffer.mutex);
             
-            // Send the audio data
-            if (vban_send_audio((vban_handle_t)ctx, send_buffer, samples_per_packet, 2) == 0) {
+            // Send the audio data as mono
+            if (vban_send_audio((vban_handle_t)ctx, send_buffer, samples_per_packet, 1) == 0) {
                 packets_sent++;
                 total_samples_sent += samples_per_packet;
-                
-                // Print stats every 100 packets
-                // if (packets_sent % 100 == 0) {
-                //     printf("VBAN Send Stats:\n");
-                //     printf("- Packets sent: %u\n", packets_sent);
-                //     printf("- Total samples sent: %llu\n", total_samples_sent);
-                //     printf("- Current input buffer size: %zu\n", g_input_buffer.size);
-                // }
             }
         } else {
             pthread_mutex_unlock(&g_input_buffer.mutex);
