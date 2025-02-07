@@ -135,6 +135,7 @@ void* network_send_thread(void* arg) {
 }
 
 void network_cleanup(vban_context_t* ctx) {
+    printf("Cleaning up network\n");
     if (ctx && ctx->socket >= 0) {
         close(ctx->socket);
         ctx->socket = -1;

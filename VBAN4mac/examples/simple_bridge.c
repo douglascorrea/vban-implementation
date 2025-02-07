@@ -4,11 +4,12 @@
 #include <CoreAudio/CoreAudio.h>
 #include <vban4mac/vban.h>
 #include "../src/audio.h"
+#include <string.h>
 
-static volatile int running = 1;
+static volatile sig_atomic_t running = 1;
 
 static void handle_signal(int sig) {
-    printf("\nSignal %d received, stopping...\n", sig);
+    (void)sig;  // Unused parameter
     running = 0;
 }
 
@@ -61,17 +62,17 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Set up signal handling
-    signal(SIGINT, handle_signal);
-    signal(SIGTERM, handle_signal);
-
-    // List available audio devices
+    // List available audio devices first
     printf("\nAvailable Audio Devices:\n");
     audio_list_devices();
 
     // Get user selected devices
     AudioDeviceID inputDevice = get_user_device_selection("input");
     AudioDeviceID outputDevice = get_user_device_selection("output");
+
+    // Set up signal handling AFTER device selection
+    signal(SIGINT, handle_signal);
+    signal(SIGTERM, handle_signal);
 
     // Initialize VBAN
     vban_handle_t vban = vban_init(argv[1], argv[2]);
@@ -103,7 +104,9 @@ int main(int argc, char* argv[]) {
         sleep(1);
     }
 
-    // Cleanup
+    // Signal received or VBAN stopped
+    printf("\nSignal received, initiating shutdown...\n");
+    printf("Stopping VBAN bridge...\n");
     vban_cleanup(vban);
     printf("VBAN bridge stopped.\n");
     return 0;

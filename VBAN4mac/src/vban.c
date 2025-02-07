@@ -48,6 +48,7 @@ vban_handle_t vban_init(const char* remote_ip, const char* stream_name) {
 }
 
 void vban_cleanup(vban_handle_t handle) {
+    printf("Cleaning up VBAN\n");
     vban_context_t* ctx = (vban_context_t*)handle;
     if (ctx) {
         ctx->is_running = 0;

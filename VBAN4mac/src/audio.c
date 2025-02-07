@@ -373,6 +373,7 @@ void audio_buffer_add(const int16_t* data, size_t samples, int channels) {
 }
 
 void audio_cleanup(void) {
+    printf("Cleaning up audio\n");
     if (audio_unit) {
         AudioOutputUnitStop(audio_unit);
         AudioUnitUninitialize(audio_unit);
@@ -508,15 +509,7 @@ void audio_list_devices(void) {
         Float64 inputRate = get_device_sample_rate(deviceID, true);
         Float64 outputRate = get_device_sample_rate(deviceID, false);
         
-        printf("\nDevice ID: %u - %s\n", (unsigned int)deviceID, name);
-        if (deviceID == defaultInput) printf("  * Default Input Device *\n");
-        if (deviceID == defaultOutput) printf("  * Default Output Device *\n");
-        if (inputChannels > 0) {
-            printf("  Input: %u channels @ %.0f Hz\n", inputChannels, inputRate);
-        }
-        if (outputChannels > 0) {
-            printf("  Output: %u channels @ %.0f Hz\n", outputChannels, outputRate);
-        }
+        printf("Device ID: %u - %s\n", (unsigned int)deviceID, name);
         
         free(name);
     }
