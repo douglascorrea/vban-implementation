@@ -6,6 +6,7 @@
 #include <vban4mac/types.h>
 #include "../src/audio.h"
 #include <string.h>
+#include <vban4mac/config.h>
 
 static volatile sig_atomic_t running = 1;
 
@@ -58,27 +59,55 @@ static AudioDeviceID get_user_device_selection(const char* type) {
 }
 
 int main(int argc, char* argv[]) {
-    if (argc != 3 && argc != 4) {
-        printf("Usage: %s <remote_ip> <stream_name> [port]\n", argv[0]);
-        printf("  port: Optional UDP port (default: %d)\n", VBAN_DEFAULT_PORT);
+    if (argc != 2) {
+        printf("Usage: %s <config_file>\n", argv[0]);
         return 1;
     }
 
-    // List available audio devices first
+    // Load configuration
+    vban_config_t config;
+    if (load_config(argv[1], &config) != 0) {
+        printf("Failed to load configuration\n");
+        return 1;
+    }
+
+    // List available audio devices
     printf("\nAvailable Audio Devices:\n");
     audio_list_devices();
 
-    // Get user selected devices
-    AudioDeviceID inputDevice = get_user_device_selection("input");
-    AudioDeviceID outputDevice = get_user_device_selection("output");
+    // Get devices from config or prompt user
+    AudioDeviceID inputDevice, outputDevice;
+    
+    if (strlen(config.input_device) > 0) {
+        inputDevice = find_device_by_name(config.input_device, 1);
+        if (!inputDevice) {
+            printf("Warning: Configured input device '%s' not found\n", config.input_device);
+            inputDevice = get_user_device_selection("input");
+        } else {
+            printf("Using configured input device: %s\n", config.input_device);
+        }
+    } else {
+        inputDevice = get_user_device_selection("input");
+    }
 
-    // Set up signal handling AFTER device selection
+    if (strlen(config.output_device) > 0) {
+        outputDevice = find_device_by_name(config.output_device, 0);
+        if (!outputDevice) {
+            printf("Warning: Configured output device '%s' not found\n", config.output_device);
+            outputDevice = get_user_device_selection("output");
+        } else {
+            printf("Using configured output device: %s\n", config.output_device);
+        }
+    } else {
+        outputDevice = get_user_device_selection("output");
+    }
+
+    // Set up signal handling
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
 
-    // Initialize VBAN with optional port
-    uint16_t port = (argc == 4) ? (uint16_t)atoi(argv[3]) : VBAN_DEFAULT_PORT;
-    vban_handle_t vban = vban_init_with_port(argv[1], argv[2], port);
+    // Initialize VBAN
+    vban_handle_t vban = vban_init_with_port(config.remote_ip, config.stream_name, config.port);
     if (!vban) {
         printf("Failed to initialize VBAN\n");
         return 1;
@@ -98,9 +127,9 @@ int main(int argc, char* argv[]) {
     }
 
     printf("\nVBAN bridge initialized successfully:\n");
-    printf("- Remote IP: %s\n", argv[1]);
-    printf("- Stream name: %s\n", argv[2]);
-    printf("- Port: %u\n", port);
+    printf("- Remote IP: %s\n", config.remote_ip);
+    printf("- Stream name: %s\n", config.stream_name);
+    printf("- Port: %u\n", config.port);
     printf("\nPress Ctrl+C to stop...\n");
 
     // Main loop
