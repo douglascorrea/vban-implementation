@@ -7,6 +7,15 @@
 typedef struct vban_context_t* vban_handle_t;
 
 /**
+ * Initialize VBAN with remote IP, stream name, and port
+ * @param remote_ip The IP address of the remote VBAN host
+ * @param stream_name The VBAN stream name (max 16 chars)
+ * @param port The UDP port to use (both for sending and receiving)
+ * @return Handle to VBAN context or NULL on error
+ */
+vban_handle_t vban_init_with_port(const char* remote_ip, const char* stream_name, uint16_t port);
+
+/**
  * Initialize VBAN with remote IP and stream name
  * @param remote_ip The IP address of the remote VBAN host
  * @param stream_name The VBAN stream name (max 16 chars)

@@ -22,6 +22,7 @@ void* network_send_thread(void* arg);
 
 // Network initialization
 int network_init(vban_context_t* ctx, const char* remote_ip);
+int network_init_with_port(vban_context_t* ctx, const char* remote_ip, uint16_t port);
 
 // Network cleanup
 void network_cleanup(vban_context_t* ctx);

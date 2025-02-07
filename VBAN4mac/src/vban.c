@@ -6,14 +6,18 @@
 #include "audio.h"
 
 vban_handle_t vban_init(const char* remote_ip, const char* stream_name) {
+    return vban_init_with_port(remote_ip, stream_name, VBAN_DEFAULT_PORT);
+}
+
+vban_handle_t vban_init_with_port(const char* remote_ip, const char* stream_name, uint16_t port) {
     // Allocate context
     vban_context_t* ctx = calloc(1, sizeof(vban_context_t));
     if (!ctx) {
         return NULL;
     }
 
-    // Initialize network
-    if (network_init(ctx, remote_ip) != 0) {
+    // Initialize network with custom port
+    if (network_init_with_port(ctx, remote_ip, port) != 0) {
         free(ctx);
         return NULL;
     }

@@ -3,6 +3,7 @@
 #include <unistd.h>
 #include <CoreAudio/CoreAudio.h>
 #include <vban4mac/vban.h>
+#include <vban4mac/types.h>
 #include "../src/audio.h"
 #include <string.h>
 
@@ -57,8 +58,9 @@ static AudioDeviceID get_user_device_selection(const char* type) {
 }
 
 int main(int argc, char* argv[]) {
-    if (argc != 3) {
-        printf("Usage: %s <remote_ip> <stream_name>\n", argv[0]);
+    if (argc != 3 && argc != 4) {
+        printf("Usage: %s <remote_ip> <stream_name> [port]\n", argv[0]);
+        printf("  port: Optional UDP port (default: %d)\n", VBAN_DEFAULT_PORT);
         return 1;
     }
 
@@ -74,8 +76,9 @@ int main(int argc, char* argv[]) {
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
 
-    // Initialize VBAN
-    vban_handle_t vban = vban_init(argv[1], argv[2]);
+    // Initialize VBAN with optional port
+    uint16_t port = (argc == 4) ? (uint16_t)atoi(argv[3]) : VBAN_DEFAULT_PORT;
+    vban_handle_t vban = vban_init_with_port(argv[1], argv[2], port);
     if (!vban) {
         printf("Failed to initialize VBAN\n");
         return 1;
@@ -97,6 +100,7 @@ int main(int argc, char* argv[]) {
     printf("\nVBAN bridge initialized successfully:\n");
     printf("- Remote IP: %s\n", argv[1]);
     printf("- Stream name: %s\n", argv[2]);
+    printf("- Port: %u\n", port);
     printf("\nPress Ctrl+C to stop...\n");
 
     // Main loop

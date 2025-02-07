@@ -12,7 +12,7 @@
 // Global audio buffers
 extern audio_buffer_t g_input_buffer;
 
-int network_init(vban_context_t* ctx, const char* remote_ip) {
+int network_init_with_port(vban_context_t* ctx, const char* remote_ip, uint16_t port) {
     // Create UDP socket
     ctx->socket = socket(AF_INET, SOCK_DGRAM, 0);
     if (ctx->socket < 0) {
@@ -22,7 +22,7 @@ int network_init(vban_context_t* ctx, const char* remote_ip) {
 
     // Configure remote address (VoiceMeeter)
     ctx->remote_addr.sin_family = AF_INET;
-    ctx->remote_addr.sin_port = htons(VBAN_DEFAULT_PORT);
+    ctx->remote_addr.sin_port = htons(port);
     if (inet_pton(AF_INET, remote_ip, &ctx->remote_addr.sin_addr) != 1) {
         perror("Failed to set remote IP");
         close(ctx->socket);
@@ -32,7 +32,7 @@ int network_init(vban_context_t* ctx, const char* remote_ip) {
     // Configure local address for receiving
     struct sockaddr_in local_addr = {0};
     local_addr.sin_family = AF_INET;
-    local_addr.sin_port = htons(VBAN_DEFAULT_PORT);
+    local_addr.sin_port = htons(port);
     local_addr.sin_addr.s_addr = INADDR_ANY;
 
     // Add socket option to reuse address
@@ -50,6 +50,10 @@ int network_init(vban_context_t* ctx, const char* remote_ip) {
     }
 
     return 0;
+}
+
+int network_init(vban_context_t* ctx, const char* remote_ip) {
+    return network_init_with_port(ctx, remote_ip, VBAN_DEFAULT_PORT);
 }
 
 void* network_receive_thread(void* arg) {
