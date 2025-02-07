@@ -10,7 +10,7 @@ EXAMPLES_DIR = examples
 SRCS = $(wildcard $(SRC_DIR)/*.c)
 OBJS = $(SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 
-EXAMPLES = simple_bridge device_bridge monitor_bridge
+EXAMPLES = simple_bridge
 EXAMPLE_BINS = $(EXAMPLES:%=$(BUILD_DIR)/%)
 
 .PHONY: all clean
