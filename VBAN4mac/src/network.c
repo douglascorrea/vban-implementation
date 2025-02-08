@@ -20,6 +20,21 @@ int network_init_with_port(vban_context_t* ctx, const char* remote_ip, uint16_t 
         return -1;
     }
 
+    // Add socket options to reuse address AND port
+    int reuse = 1;
+    if (setsockopt(ctx->socket, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
+        perror("Failed to set SO_REUSEADDR");
+        close(ctx->socket);
+        return -1;
+    }
+    
+    // Add SO_REUSEPORT option
+    if (setsockopt(ctx->socket, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(reuse)) < 0) {
+        perror("Failed to set SO_REUSEPORT");
+        close(ctx->socket);
+        return -1;
+    }
+
     // Configure remote address (VoiceMeeter)
     ctx->remote_addr.sin_family = AF_INET;
     ctx->remote_addr.sin_port = htons(port);
@@ -34,14 +49,6 @@ int network_init_with_port(vban_context_t* ctx, const char* remote_ip, uint16_t 
     local_addr.sin_family = AF_INET;
     local_addr.sin_port = htons(port);
     local_addr.sin_addr.s_addr = INADDR_ANY;
-
-    // Add socket option to reuse address
-    int reuse = 1;
-    if (setsockopt(ctx->socket, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
-        perror("Failed to set socket options");
-        close(ctx->socket);
-        return -1;
-    }
 
     if (bind(ctx->socket, (struct sockaddr*)&local_addr, sizeof(local_addr)) < 0) {
         perror("Failed to bind socket");

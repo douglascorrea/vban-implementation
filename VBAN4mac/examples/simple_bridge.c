@@ -4,9 +4,13 @@
 #include <CoreAudio/CoreAudio.h>
 #include <vban4mac/vban.h>
 #include <vban4mac/types.h>
+#include <vban4mac/config.h>
 #include "../src/audio.h"
 #include <string.h>
-#include <vban4mac/config.h>
+#include <syslog.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <stdlib.h>
 
 static volatile sig_atomic_t running = 1;
 
@@ -15,47 +19,78 @@ static void handle_signal(int sig) {
     running = 0;
 }
 
-static AudioDeviceID get_user_device_selection(const char* type) {
-    AudioDeviceID deviceID;
-    char input[16];
-    
-    while (1) {
-        printf("\nEnter %s device ID (or press Enter for system default): ", type);
-        fflush(stdout);
-        
-        if (fgets(input, sizeof(input), stdin)) {
-            // Remove newline
-            input[strcspn(input, "\n")] = 0;
-            
-            // Empty input means use default
-            if (strlen(input) == 0) {
-                AudioObjectPropertyAddress property = {
-                    type[0] == 'i' ? kAudioHardwarePropertyDefaultInputDevice : kAudioHardwarePropertyDefaultOutputDevice,
-                    kAudioObjectPropertyScopeGlobal,
-                    kAudioObjectPropertyElementMain
-                };
-                
-                UInt32 size = sizeof(AudioDeviceID);
-                AudioObjectGetPropertyData(kAudioObjectSystemObject, &property, 0, NULL, &size, &deviceID);
-                printf("Using default %s device (ID: %u)\n", type, (unsigned int)deviceID);
-                return deviceID;
-            }
-            
-            // Try to parse device ID
-            char* endptr;
-            unsigned long id = strtoul(input, &endptr, 10);
-            if (*endptr == '\0') {
-                deviceID = (AudioDeviceID)id;
-                char* name = get_device_name(deviceID);
-                if (name) {
-                    printf("Selected device: %s\n", name);
-                    free(name);
-                    return deviceID;
-                }
-            }
-        }
-        printf("Invalid device ID. Please try again.\n");
+static void daemonize(const char* pid_file) {
+    // First fork (detaches from parent)
+    pid_t pid = fork();
+    if (pid < 0) {
+        syslog(LOG_ERR, "Failed to fork first time");
+        exit(EXIT_FAILURE);
     }
+    if (pid > 0) {
+        exit(EXIT_SUCCESS);
+    }
+
+    // Create new session
+    if (setsid() < 0) {
+        syslog(LOG_ERR, "Failed to create new session");
+        exit(EXIT_FAILURE);
+    }
+
+    // Second fork (relinquish session leadership)
+    pid = fork();
+    if (pid < 0) {
+        syslog(LOG_ERR, "Failed to fork second time");
+        exit(EXIT_FAILURE);
+    }
+    if (pid > 0) {
+        exit(EXIT_SUCCESS);
+    }
+
+    // Set new file permissions
+    umask(0);
+
+    // Change to root directory
+    chdir("/");
+
+    // Close all open file descriptors
+    for (int x = sysconf(_SC_OPEN_MAX); x >= 0; x--) {
+        close(x);
+    }
+
+    // Redirect standard files to /dev/null
+    open("/dev/null", O_RDWR);
+    dup(0);
+    dup(0);
+
+    // Write PID file
+    FILE* pid_fp = fopen(pid_file, "w");
+    if (pid_fp) {
+        fprintf(pid_fp, "%d\n", getpid());
+        fclose(pid_fp);
+    }
+}
+
+// Add this function to slugify the stream name
+static void slugify(const char* input, char* output, size_t output_size) {
+    size_t i = 0, j = 0;
+    
+    // Convert to lowercase and replace non-alphanumeric chars with hyphen
+    while (input[i] && j < output_size - 1) {
+        char c = tolower((unsigned char)input[i]);
+        if (isalnum(c)) {
+            output[j++] = c;
+        } else if (j > 0 && output[j-1] != '-') {
+            output[j++] = '-';
+        }
+        i++;
+    }
+    
+    // Remove trailing hyphen if exists
+    if (j > 0 && output[j-1] == '-') {
+        j--;
+    }
+    
+    output[j] = '\0';
 }
 
 int main(int argc, char* argv[]) {
@@ -64,83 +99,94 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // Initialize syslog
+    openlog("vban_bridge", LOG_PID | LOG_NDELAY, LOG_DAEMON);
+
     // Load configuration
     vban_config_t config;
     if (load_config(argv[1], &config) != 0) {
-        printf("Failed to load configuration\n");
+        syslog(LOG_ERR, "Failed to load configuration");
         return 1;
     }
 
-    // List available audio devices
-    printf("\nAvailable Audio Devices:\n");
-    audio_list_devices();
+    // Create PID filename based on slugified stream name
+    char slug[64];
+    slugify(config.stream_name, slug, sizeof(slug));
+    
+    char pid_file[128];
+    snprintf(pid_file, sizeof(pid_file), "/tmp/vban_bridge_%s.pid", slug);
 
-    // Get devices from config or prompt user
-    AudioDeviceID inputDevice, outputDevice;
+    // Daemonize the process
+    daemonize(pid_file);
+
+    // Set up signal handling
+    signal(SIGTERM, handle_signal);
+    signal(SIGHUP, handle_signal);
+    signal(SIGINT, handle_signal);
+
+    // Get devices from config
+    AudioDeviceID inputDevice = 0, outputDevice = 0;
     
     if (strlen(config.input_device) > 0) {
         inputDevice = find_device_by_name(config.input_device, 1);
         if (!inputDevice) {
-            printf("Warning: Configured input device '%s' not found\n", config.input_device);
-            inputDevice = get_user_device_selection("input");
-        } else {
-            printf("Using configured input device: %s\n", config.input_device);
+            syslog(LOG_ERR, "Configured input device '%s' not found", config.input_device);
+            goto cleanup;
         }
+        syslog(LOG_INFO, "Using input device: %s", config.input_device);
     } else {
-        inputDevice = get_user_device_selection("input");
+        syslog(LOG_ERR, "No input device configured");
+        goto cleanup;
     }
 
     if (strlen(config.output_device) > 0) {
         outputDevice = find_device_by_name(config.output_device, 0);
         if (!outputDevice) {
-            printf("Warning: Configured output device '%s' not found\n", config.output_device);
-            outputDevice = get_user_device_selection("output");
-        } else {
-            printf("Using configured output device: %s\n", config.output_device);
+            syslog(LOG_ERR, "Configured output device '%s' not found", config.output_device);
+            goto cleanup;
         }
+        syslog(LOG_INFO, "Using output device: %s", config.output_device);
     } else {
-        outputDevice = get_user_device_selection("output");
+        syslog(LOG_ERR, "No output device configured");
+        goto cleanup;
     }
-
-    // Set up signal handling
-    signal(SIGINT, handle_signal);
-    signal(SIGTERM, handle_signal);
 
     // Initialize VBAN
     vban_handle_t vban = vban_init_with_port(config.remote_ip, config.stream_name, config.port);
     if (!vban) {
-        printf("Failed to initialize VBAN\n");
-        return 1;
+        syslog(LOG_ERR, "Failed to initialize VBAN");
+        goto cleanup;
     }
 
     // Set input and output devices
     if (audio_set_input_device(inputDevice) != noErr) {
-        printf("Failed to set input device\n");
+        syslog(LOG_ERR, "Failed to set input device");
         vban_cleanup(vban);
-        return 1;
+        goto cleanup;
     }
 
     if (audio_set_output_device(outputDevice) != noErr) {
-        printf("Failed to set output device\n");
+        syslog(LOG_ERR, "Failed to set output device");
         vban_cleanup(vban);
-        return 1;
+        goto cleanup;
     }
 
-    printf("\nVBAN bridge initialized successfully:\n");
-    printf("- Remote IP: %s\n", config.remote_ip);
-    printf("- Stream name: %s\n", config.stream_name);
-    printf("- Port: %u\n", config.port);
-    printf("\nPress Ctrl+C to stop...\n");
+    syslog(LOG_INFO, "VBAN bridge started - IP: %s, Stream: %s, Port: %u",
+           config.remote_ip, config.stream_name, config.port);
 
     // Main loop
     while (running && vban_is_running(vban)) {
         sleep(1);
     }
 
-    // Signal received or VBAN stopped
-    printf("\nSignal received, initiating shutdown...\n");
-    printf("Stopping VBAN bridge...\n");
+    // Cleanup
+    syslog(LOG_INFO, "VBAN bridge stopping...");
     vban_cleanup(vban);
-    printf("VBAN bridge stopped.\n");
+    syslog(LOG_INFO, "VBAN bridge stopped");
+
+cleanup:
+    // Remove PID file
+    unlink(pid_file);
+    closelog();
     return 0;
 } 
