@@ -11,6 +11,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <stdlib.h>
+#include <getopt.h>
 
 static volatile sig_atomic_t running = 1;
 
@@ -94,17 +95,45 @@ static void slugify(const char* input, char* output, size_t output_size) {
 }
 
 int main(int argc, char* argv[]) {
-    if (argc != 2) {
-        printf("Usage: %s <config_file>\n", argv[0]);
+    int verbose = 0;
+    int opt;
+    char* config_file = NULL;
+
+    // Parse command line options
+    while ((opt = getopt(argc, argv, "vc:")) != -1) {
+        switch (opt) {
+            case 'v':
+                verbose = 1;
+                break;
+            case 'c':
+                config_file = optarg;
+                break;
+            default:
+                printf("Usage: %s [-v] -c <config_file>\n", argv[0]);
+                printf("Options:\n");
+                printf("  -v            Verbose mode (no daemonization)\n");
+                printf("  -c <file>     Configuration file\n");
+                return 1;
+        }
+    }
+
+    if (!config_file) {
+        printf("Usage: %s [-v] -c <config_file>\n", argv[0]);
         return 1;
     }
 
-    // Initialize syslog
-    openlog("vban_bridge", LOG_PID | LOG_NDELAY, LOG_DAEMON);
+    // Initialize logging
+    if (verbose) {
+        // In verbose mode, log to stdout
+        openlog("vban_bridge", LOG_PERROR | LOG_PID, LOG_USER);
+    } else {
+        // In daemon mode, log to syslog
+        openlog("vban_bridge", LOG_PID | LOG_NDELAY, LOG_DAEMON);
+    }
 
     // Load configuration
     vban_config_t config;
-    if (load_config(argv[1], &config) != 0) {
+    if (load_config(config_file, &config) != 0) {
         syslog(LOG_ERR, "Failed to load configuration");
         return 1;
     }
@@ -116,8 +145,17 @@ int main(int argc, char* argv[]) {
     char pid_file[128];
     snprintf(pid_file, sizeof(pid_file), "/tmp/vban_bridge_%s.pid", slug);
 
-    // Daemonize the process
-    daemonize(pid_file);
+    // Only daemonize if not in verbose mode
+    if (!verbose) {
+        daemonize(pid_file);
+    } else {
+        // In verbose mode, just write PID file
+        FILE* pid_fp = fopen(pid_file, "w");
+        if (pid_fp) {
+            fprintf(pid_fp, "%d\n", getpid());
+            fclose(pid_fp);
+        }
+    }
 
     // Set up signal handling
     signal(SIGTERM, handle_signal);

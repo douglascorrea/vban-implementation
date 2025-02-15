@@ -40,6 +40,7 @@ check_running() {
 # Function to start a bridge
 start() {
     local config_file="$1"
+    local verbose="$2"
     local stream_name=$(get_stream_name "$config_file")
     local pid_file=$(get_pid_file "$stream_name")
     
@@ -48,7 +49,11 @@ start() {
         return 1
     fi
     
-    ./build/simple_bridge "$config_file"
+    if [ "$verbose" = "true" ]; then
+        ./build/simple_bridge -v -c "$config_file"
+    else
+        ./build/simple_bridge -c "$config_file"
+    fi
     sleep 1  # Give the daemon time to start
     
     if check_running "$pid_file"; then
@@ -116,10 +121,19 @@ status() {
 case "$1" in
     start)
         if [ -z "$2" ]; then
-            echo "Usage: $0 start <config_file>"
+            echo "Usage: $0 start [-v] <config_file>"
             exit 1
         fi
-        start "$2"
+        
+        if [ "$2" = "-v" ]; then
+            if [ -z "$3" ]; then
+                echo "Usage: $0 start [-v] <config_file>"
+                exit 1
+            fi
+            start "$3" "true"
+        else
+            start "$2" "false"
+        fi
         ;;
     stop)
         if [ -z "$2" ]; then
@@ -142,7 +156,7 @@ case "$1" in
         ;;
     *)
         echo "Usage: $0 {start|stop|restart|status}"
-        echo "  start <config_file>                Start a new VBAN bridge"
+        echo "  start [-v] <config_file>                Start a new VBAN bridge"
         echo "  stop <stream_name>                 Stop a VBAN bridge"
         echo "  restart <stream_name> <config_file> Restart a VBAN bridge"
         echo "  status                             Show status of all bridges"
@@ -150,4 +164,5 @@ case "$1" in
         ;;
 esac
 
+exit 0 
 exit 0 
